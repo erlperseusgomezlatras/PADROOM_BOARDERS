@@ -124,7 +124,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'updat
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'archive_house') {
   $hid = (int)($_POST['house_id'] ?? 0);
   if ($hid > 0) {
-    // Count occupied for this house
     $q = "SELECT COUNT(*)
             FROM rooms r
             JOIN floors f ON r.floor_id = f.id
@@ -238,87 +237,120 @@ foreach ($houses as $h) {
   <link href="<?= $BASE ?>/../assets/css/style.css" rel="stylesheet">
   <style>
     :root{
-      --pad-primary:#361E5C;
-      --pad-accent:#6141A6;
-      --pad-deep:#2A184B;
-      --pad-text:#FFF;
-      --good:#17a2b8; /* info teal */
-      --ok:#28a745;   /* green */
-      --warn:#ffc107; /* amber */
-      --bad:#dc3545;  /* red */
+      --ink:#1f2241;
+      --muted:#6b7280;
+      --bg-soft:#f6f7fb;
+
+      --primary:#4b3fb7;       /* refined primary */
+      --primary-2:#7d6bff;     /* accent */
+      --success:#22a06b;
+      --danger:#e3455b;
+      --warning:#e7a100;
+
+      --border:#e7e7f1;
+      --card:#ffffff;
     }
-    .main{ margin-top:60px; padding:20px 20px 0 20px; transition:all .3s; }
+
+    body{ background: var(--bg-soft); }
+    .main{ margin-top:60px; padding:24px 16px 32px; transition:all .3s; }
     @media (min-width: 992px){ .main{ margin-left:250px; } }
 
+    /* Page title */
+    .pagetitle h1{ color: var(--ink); font-weight:700; }
+
+    /* Alerts center */
+    .alert{ max-width: 980px; margin: 0 auto 12px; }
+
     /* Buttons */
-    .gradient-btn{
-      background: linear-gradient(90deg, var(--pad-primary), var(--pad-accent));
-      color:#fff; border:none; border-radius:.6rem;
-      box-shadow:0 6px 18px rgba(54,30,92,.25);
+    .btn-primary-soft{
+      background: linear-gradient(90deg, var(--primary), var(--primary-2));
+      color:#fff; border:0; border-radius:10px; padding:.44rem .9rem;
+      box-shadow:0 10px 22px rgba(75,63,183,.18);
+      transition: transform .15s ease, opacity .15s ease;
     }
-    .gradient-btn:hover{ opacity:.95; color:#fff; }
+    .btn-primary-soft:hover{ opacity:.93; transform:translateY(-1px); color:#fff; }
+
+    .btn-outline-primary-soft{
+      background:#fff; color:var(--primary);
+      border:1px solid var(--primary-2); border-radius:10px; padding:.44rem .9rem;
+      transition: all .15s ease;
+    }
+    .btn-outline-primary-soft:hover{
+      background: linear-gradient(90deg, var(--primary), var(--primary-2));
+      color:#fff; box-shadow:0 10px 22px rgba(75,63,183,.18);
+    }
+
     .btn-ghost{
-      background:transparent; border:1px solid rgba(97,65,166,.35);
-      color:var(--pad-accent); border-radius:.6rem;
+      background:#fff; border:1px solid var(--border); color:var(--ink);
+      padding:.35rem .7rem; border-radius:10px;
     }
-    .btn-ghost:hover{
-      background:linear-gradient(90deg, rgba(97,65,166,.15), rgba(54,30,92,.18));
-      color:#fff;
-    }
-    .btn-ghost[disabled]{ opacity:.5; cursor:not-allowed; }
+    .btn-ghost:hover{ background:#f2f1fe; border-color:#d6d4ff; color:var(--primary); }
+    .btn-ghost[disabled]{ opacity:.55; cursor:not-allowed; }
 
     /* House card */
     .house-card{
-      cursor:pointer; transition:.2s;
-      border:1px solid #eee; border-radius:14px; background:#fff;
-      box-shadow:0 8px 24px rgba(0,0,0,.06);
+      border:1px solid var(--border); border-radius:14px; background:var(--card);
+      box-shadow:0 8px 24px rgba(22,24,57,.06);
+      transition: box-shadow .2s ease, transform .2s ease;
+      overflow:hidden;
     }
-    .house-card:hover{ transform:translateY(-2px); box-shadow:0 10px 28px rgba(0,0,0,.08); }
+    .house-card:hover{ transform: translateY(-2px); box-shadow:0 14px 28px rgba(22,24,57,.08); }
     .house-head{
       display:flex; align-items:flex-start; justify-content:space-between; gap:.75rem;
+      border-bottom:1px dashed var(--border); padding-bottom:.45rem;
     }
-    .house-name{ margin:0; font-weight:700; color:#2D1B4E; }
-    .house-address{ color:#6c757d; }
+    .house-name{ margin:0; font-weight:800; color:var(--ink); }
+    .house-address{ color:var(--muted); font-size:.9rem; }
 
-    /* Stat chips */
-    .chip{
-      display:inline-flex; align-items:center; gap:.35rem;
-      padding:.25rem .5rem; border-radius:999px; font-size:.85rem; font-weight:600; color:#fff;
-      box-shadow:0 8px 20px rgba(0,0,0,.08);
+    /* Stat pills */
+    .pill{
+      display:inline-flex; align-items:center; gap:.4rem;
+      padding:.28rem .6rem; border-radius:999px; font-size:.82rem; font-weight:700; color:#fff;
+      box-shadow:0 10px 22px rgba(0,0,0,.06);
     }
-    .chip-floors{ background:linear-gradient(90deg, #6f42c1, #6141A6); }
-    .chip-rooms{  background:linear-gradient(90deg, #20c997, #17a2b8); }
-    .chip-vac{    background:linear-gradient(90deg, #28a745, #20c997); }
-    .chip-occ{    background:linear-gradient(90deg, #ff6b6b, #dc3545); }
+    .pill-floors{ background:linear-gradient(90deg,#6f6eea,#8e86ff); }
+    .pill-rooms{  background:linear-gradient(90deg,#20c997,#14a6bf); }
+    .pill-vac{    background:linear-gradient(90deg,#1dbf73,#22a06b); }
+    .pill-occ{    background:linear-gradient(90deg,#ff7a7a,#e3455b); }
 
-    /* Floor + room cards */
-    .floor-section{ background:#f9f9ff; border:1px solid #eee; border-radius:12px; padding:1rem; margin-top:.75rem; }
+    /* Floor + room sections */
+    .floor-section{
+      background:#fff; border:1px solid var(--border); border-radius:12px;
+      padding:1rem; margin-top:.85rem;
+    }
     .floor-title{
-      font-weight:700; margin-bottom:.75rem;
-      background:linear-gradient(90deg, rgba(97,65,166,.12), rgba(54,30,92,.14));
-      padding:.4rem .6rem; border-radius:8px; color:#2D1B4E;
+      font-weight:800; color:var(--ink);
+      background:linear-gradient(90deg,rgba(125,107,255,.12),rgba(75,63,183,.12));
+      border:1px solid var(--border); padding:.42rem .6rem; border-radius:8px;
+      display:inline-block; margin-bottom:.8rem;
     }
+
     .room-box{
-      background:#fff;
-      border:1px solid #e9e6f3;
-      border-radius:10px;
-      padding:.65rem .7rem;
-      display:flex; align-items:center; justify-content:space-between; gap:.6rem;
-      min-height:90px; transition:.2s;
-      box-shadow:0 6px 16px rgba(0,0,0,.05);
+      background:#fff; border:1px solid var(--border); border-radius:12px;
+      padding:.7rem .75rem; display:flex; align-items:center; justify-content:space-between; gap:.7rem;
+      min-height:92px; transition: box-shadow .2s ease, transform .2s ease, background .2s ease;
+      box-shadow:0 6px 16px rgba(22,24,57,.04);
     }
-    .room-box.vacant:hover{ background:linear-gradient(180deg, rgba(97,65,166,.05), rgba(32,201,151,.06)); }
-    .room-box.occupied{ background:linear-gradient(180deg, rgba(220,53,69,.06), rgba(255,107,107,.05)); }
-    .room-left{ min-width:120px; }
-    .room-label{ font-weight:800; }
-    .room-occupied{ color:var(--bad); font-size:.9rem; }
-    .room-vacant{ color:var(--ok); font-size:.9rem; }
+    .room-box.vacant:hover{ background:linear-gradient(180deg, rgba(34,160,107,.06), rgba(125,107,255,.05)); transform:translateY(-1px); }
+    .room-box.occupied{ background:linear-gradient(180deg, rgba(227,69,91,.06), rgba(255,122,122,.05)); }
+
+    .room-left { min-width:122px; }
+    .room-label{ font-weight:800; color:var(--ink); }
+    .room-occupied{ color:var(--danger); font-weight:700; font-size:.9rem; }
+    .room-vacant{ color:var(--success); font-weight:700; font-size:.9rem; }
+
     .room-center{ text-align:center; flex:1; padding:0 .5rem; }
-    .room-center .cap{ font-weight:700; }
-    .room-center .note{
-      font-size:.85rem; color:#6c757d; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+    .room-center .cap{ font-weight:700; color:var(--ink); }
+    .room-center .note{ font-size:.85rem; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+    .rate-label{ font-size:.78rem; color:var(--muted); }
+    .rate-val{ font-weight:800; color:var(--ink); }
+    .rate-input{ width:128px; }
+
+    /* Form controls focus */
+    .form-control:focus, .form-select:focus{
+      border-color:#c9c5ff; box-shadow:0 0 0 .18rem rgba(125,107,255,.15);
     }
-    .rate-input{ width:120px; }
   </style>
 </head>
 <body class="d-flex flex-column min-vh-100">
@@ -326,7 +358,7 @@ foreach ($houses as $h) {
   <?php include __DIR__ . '/../admin/sidebar.php'; ?>
 
   <main id="main" class="main flex-grow-1">
-    <div class="pagetitle mb-4 text-center">
+    <div class="pagetitle mb-3 text-center">
       <h1 class="h4 mb-1">Manage Room Rates</h1>
       <nav>
         <ol class="breadcrumb justify-content-center">
@@ -340,23 +372,22 @@ foreach ($houses as $h) {
     <?php if ($err): ?><div class="alert alert-danger text-center"><?= htmlspecialchars($err) ?></div><?php endif; ?>
 
     <!-- House Cards -->
-    <div class="row g-3 mb-4">
-      <?php if (empty($houses)): ?>
-        <div class="col-12"><div class="alert alert-info text-center">No houses yet. Create one in <strong>Manage House</strong>.</div></div>
-      <?php else: ?>
-        <?php foreach ($houses as $h): ?>
-          <div class="col-md-6 col-lg-4">
-            <div class="house-card p-3">
-              <div class="house-head">
-                <div style="flex:1;">
-                  <h5 class="house-name"><?= htmlspecialchars($h['name']) ?></h5>
-                  <?php if (!empty($h['address'])): ?>
-                    <div class="house-address small"><i class="bi bi-geo-alt me-1"></i><?= htmlspecialchars($h['address']) ?></div>
-                  <?php endif; ?>
-                </div>
-                <div class="d-flex align-items-start gap-2">
-                  <!-- Archive button (disabled if occupied > 0) -->
-                  <form method="post" onsubmit="return confirm('Archive this house? Floors and rooms remain, but the house is hidden from active view.');">
+    <div class="container-xxl px-0">
+      <div class="row g-3 mb-4">
+        <?php if (empty($houses)): ?>
+          <div class="col-12"><div class="alert alert-info text-center">No houses yet. Create one in <strong>Manage House</strong>.</div></div>
+        <?php else: ?>
+          <?php foreach ($houses as $h): ?>
+            <div class="col-md-6 col-lg-4">
+              <div class="house-card p-3">
+                <div class="house-head">
+                  <div style="flex:1;">
+                    <h5 class="house-name mb-1"><?= htmlspecialchars($h['name']) ?></h5>
+                    <?php if (!empty($h['address'])): ?>
+                      <div class="house-address"><i class="bi bi-geo-alt me-1"></i><?= htmlspecialchars($h['address']) ?></div>
+                    <?php endif; ?>
+                  </div>
+                  <form method="post" onsubmit="return confirm('Archive this house? It will be hidden but floors and rooms remain.');">
                     <input type="hidden" name="action" value="archive_house">
                     <input type="hidden" name="house_id" value="<?= (int)$h['id'] ?>">
                     <button class="btn btn-ghost btn-sm"
@@ -367,31 +398,32 @@ foreach ($houses as $h) {
                     </button>
                   </form>
                 </div>
-              </div>
 
-              <div class="mt-3 d-flex flex-wrap gap-2">
-                <span class="chip chip-floors"><i class="bi bi-building me-1"></i><?= (int)$h['floors_count'] ?> Floors</span>
-                <span class="chip chip-rooms"><i class="bi bi-door-closed me-1"></i><?= (int)$h['rooms_count'] ?> Rooms</span>
-                <span class="chip chip-vac"><i class="bi bi-check2-circle me-1"></i><?= (int)$h['vacant_count'] ?> Vacant</span>
-                <span class="chip chip-occ"><i class="bi bi-person-fill-lock me-1"></i><?= (int)$h['occupied_count'] ?> Occupied</span>
-              </div>
+                <div class="mt-3 d-flex flex-wrap gap-2">
+                  <span class="pill pill-floors"><i class="bi bi-building me-1"></i><?= (int)$h['floors_count'] ?> Floors</span>
+                  <span class="pill pill-rooms"><i class="bi bi-door-closed me-1"></i><?= (int)$h['rooms_count'] ?> Rooms</span>
+                  <span class="pill pill-vac"><i class="bi bi-check2-circle me-1"></i><?= (int)$h['vacant_count'] ?> Vacant</span>
+                  <span class="pill pill-occ"><i class="bi bi-person-fill-lock me-1"></i><?= (int)$h['occupied_count'] ?> Occupied</span>
+                </div>
 
-              <div class="mt-3 text-end">
-                <button class="btn gradient-btn btn-sm"
-                        type="button"
-                        data-target-house="<?= (int)$h['id'] ?>">
-                  <i class="bi bi-chevron-down me-1"></i> View Floors & Rooms
-                </button>
+                <div class="mt-3 text-end">
+                  <button class="btn btn-primary-soft btn-sm"
+                          type="button"
+                          data-target-house="<?= (int)$h['id'] ?>">
+                    <i class="bi bi-layers me-1"></i> Floors & Rooms
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
-        <?php endforeach; ?>
-      <?php endif; ?>
+          <?php endforeach; ?>
+        <?php endif; ?>
+      </div>
     </div>
 
     <!-- Floors and Rooms (hidden by default) -->
+    <div class="container-xxl px-0">
     <?php foreach ($houses as $h): ?>
-      <form method="POST" id="house-<?= (int)$h['id'] ?>" class="house-floors mb-3" style="display:none;">
+      <form method="POST" id="house-<?= (int)$h['id'] ?>" class="house-floors mb-4" style="display:none;">
         <input type="hidden" name="action" value="bulk_update">
         <?php foreach ($houseRooms[$h['id']] as $floor): ?>
           <div class="floor-section">
@@ -415,9 +447,8 @@ foreach ($houses as $h) {
                     </div>
 
                     <div class="d-flex flex-column align-items-end gap-2">
-                      <!-- One edit button for capacity+notes -->
                       <button type="button"
-                              class="btn btn-sm btn-ghost"
+                              class="btn btn-outline-primary-soft btn-sm"
                               data-bs-toggle="modal"
                               data-bs-target="#metaModal"
                               data-room='<?= json_encode([
@@ -438,9 +469,9 @@ foreach ($houses as $h) {
                         </div>
                       <?php else: ?>
                         <div class="text-end">
-                          <div class="small text-muted">Rate</div>
-                          <div class="fw-semibold">
-                            <?= $r['rate'] !== null ? number_format($r['rate'], 2) : '—' ?>
+                          <div class="rate-label">Rate</div>
+                          <div class="rate-val">
+                            <?= $r['rate'] !== null ? '₱'.number_format($r['rate'], 2) : '—' ?>
                           </div>
                         </div>
                       <?php endif; ?>
@@ -452,12 +483,13 @@ foreach ($houses as $h) {
           </div>
         <?php endforeach; ?>
         <div class="text-end mt-3">
-          <button type="submit" class="btn gradient-btn px-4">
+          <button type="submit" class="btn btn-primary-soft px-4">
             <i class="bi bi-save me-2"></i>Save All Changes
           </button>
         </div>
       </form>
     <?php endforeach; ?>
+    </div>
   </main>
 
   <?php include __DIR__ . '/../admin/footer.php'; ?>
@@ -484,8 +516,8 @@ foreach ($houses as $h) {
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-light" type="button" data-bs-dismiss="modal">Cancel</button>
-          <button class="btn gradient-btn" type="submit"><i class="bi bi-check2-circle me-1"></i> Save</button>
+          <button class="btn btn-ghost" type="button" data-bs-dismiss="modal">Cancel</button>
+          <button class="btn btn-primary-soft" type="submit"><i class="bi bi-check2-circle me-1"></i> Save</button>
         </div>
       </form>
     </div>

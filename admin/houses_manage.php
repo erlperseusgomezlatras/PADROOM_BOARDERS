@@ -7,20 +7,44 @@ $BASE = rtrim(dirname($_SERVER['SCRIPT_NAME']), '/');
 
 $msg = "";
 $err = "";
+$errors = [];
 
 // helper to safely fetch int
 function int_or_zero($v){ return max(0, (int)($v ?? 0)); }
+function val($arr, $k){ return htmlspecialchars(trim($arr[$k] ?? ''), ENT_QUOTES, 'UTF-8'); }
+
+// Defaults for sticky form after validation errors
+$old = $_POST ?? [];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   $house_name = trim($_POST['house_name'] ?? '');
-  $house_addr = trim($_POST['house_address'] ?? '');
   $floors_cnt = int_or_zero($_POST['floors_cnt'] ?? 0);
   $rooms_arr  = $_POST['rooms_per_floor'] ?? []; // array of strings/ints
 
+  // PSGC address parts
+  $region_code    = trim($_POST['region_code'] ?? '');
+  $region_name    = trim($_POST['region_name'] ?? '');
+  $province_code  = trim($_POST['province_code'] ?? '');
+  $province_name  = trim($_POST['province_name'] ?? '');
+  $city_code      = trim($_POST['city_code'] ?? '');
+  $city_name      = trim($_POST['city_name'] ?? '');
+  $brgy_code      = trim($_POST['brgy_code'] ?? '');
+  $brgy_name      = trim($_POST['brgy_name'] ?? '');
+  $street_details = trim($_POST['street_details'] ?? '');
+  $zip_code       = trim($_POST['zip_code'] ?? '');
+
   // Basic validation
-  if ($house_name === '' || $floors_cnt < 1) {
-    $err = "House name and at least 1 floor are required.";
-  } else {
+  if ($house_name === '') $errors['house_name'] = "House name is required.";
+  if ($floors_cnt < 1)    $errors['floors_cnt'] = "At least 1 floor is required.";
+
+  // Address validation (required hierarchy)
+  if ($region_code===''   || $region_name==='')   $errors['region']   = "Select a region.";
+  if ($province_code==='' || $province_name==='') $errors['province'] = "Select a province.";
+  if ($city_code===''     || $city_name==='')     $errors['city']     = "Select a city/municipality.";
+  if ($brgy_code===''     || $brgy_name==='')     $errors['barangay'] = "Select a barangay.";
+  if ($zip_code !== '' && !preg_match('/^\d{4}$/', $zip_code)) $errors['zip_code'] = "ZIP must be 4 digits.";
+
+  if (empty($errors)) {
     // Unique name check (houses.name has UNIQUE index)
     $stmt = $conn->prepare("SELECT COUNT(*) FROM houses WHERE name=?");
     $stmt->bind_param("s", $house_name);
@@ -28,6 +52,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $stmt->bind_result($dup);
     $stmt->fetch();
     $stmt->close();
+
     if ($dup > 0) {
       $err = "House name already exists. Choose another.";
     } else {
@@ -36,6 +61,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       for ($i=1; $i <= $floors_cnt; $i++) {
         $rooms_per_floor[$i] = max(1, (int)($rooms_arr[$i] ?? 1));
       }
+
+      // Compose address string
+      $addr_parts = [];
+      if ($street_details !== '') $addr_parts[] = $street_details;
+      $addr_parts[] = $brgy_name;
+      $addr_parts[] = $city_name;
+      $addr_parts[] = $province_name;
+      $addr_parts[] = $region_name;
+      if ($zip_code !== '') $addr_parts[] = $zip_code;
+      $house_addr = implode(', ', $addr_parts);
 
       // Create House -> Floors -> Rooms in a transaction
       try {
@@ -48,11 +83,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $house_id = $stmtH->insert_id;
         $stmtH->close();
 
-        // Prepared statements for floors and rooms
+        // 2) Floors + 3) Rooms
         $stmtF = $conn->prepare("INSERT INTO floors (house_id, floor_label, sort_order) VALUES (?, ?, ?)");
         $stmtR = $conn->prepare("INSERT INTO rooms (floor_id, room_label, capacity, status, notes) VALUES (?, ?, NULL, 'vacant', NULL)");
 
-        // 2) Floors + 3) Rooms
         for ($i = 1; $i <= $floors_cnt; $i++) {
           $label = "Floor $i";
           $sort  = $i;
@@ -62,15 +96,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
           $room_count = $rooms_per_floor[$i];
           for ($r = 1; $r <= $room_count; $r++) {
-            // Format: Floor number + room number (e.g. 101, 102, 201)
-            $room_number = sprintf('%d%02d', $i, $r); 
-            $room_label = "Room $room_number";
+            // e.g., 101, 102 ... 201, 202 ...
+            $room_number = sprintf('%d%02d', $i, $r);
+            $room_label  = "Room $room_number";
             $stmtR->bind_param("is", $floor_id, $room_label);
             if (!$stmtR->execute()) throw new Exception($conn->error);
           }
         }
-
-
 
         $stmtF->close();
         $stmtR->close();
@@ -80,12 +112,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $total_rooms = array_sum($rooms_per_floor);
         $msg = "House <strong>" . htmlspecialchars($house_name) . "</strong> created with <strong>$floors_cnt</strong> floor(s) and <strong>$total_rooms</strong> room(s).";
         // Clear POST defaults after success
-        $_POST = [];
+        $old = [];
       } catch (Exception $e) {
         $conn->rollback();
         $err = "Failed to create house: " . $e->getMessage();
       }
     }
+  } else {
+    $err = "Please fix the highlighted fields.";
   }
 }
 
@@ -105,11 +139,10 @@ if ($res = $conn->query($sqlLatest)) {
 }
 
 // Prefill values (when validation fails)
-$pref_name = htmlspecialchars($_POST['house_name'] ?? '');
-$pref_addr = htmlspecialchars($_POST['house_address'] ?? '');
-$pref_floors = (int)($_POST['floors_cnt'] ?? 1);
+$pref_name   = val($old,'house_name');
+$pref_floors = (int)($old['floors_cnt'] ?? 1);
 if ($pref_floors < 1) $pref_floors = 1;
-$pref_rooms = $_POST['rooms_per_floor'] ?? [];
+$pref_rooms  = $old['rooms_per_floor'] ?? [];
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -152,8 +185,8 @@ $pref_rooms = $_POST['rooms_per_floor'] ?? [];
     .form-control:focus, .form-select:focus{
       border-color:#6141A6; box-shadow:0 0 0 .2rem rgba(97,65,166,.15);
     }
-
     .small-muted{ color:#6c757d; }
+    .is-invalid + .invalid-feedback { display:block; }
   </style>
 </head>
 <body class="d-flex flex-column min-vh-100">
@@ -183,19 +216,63 @@ $pref_rooms = $_POST['rooms_per_floor'] ?? [];
               <h2 class="h5 mb-0 title-v"><i class="bi bi-house-add me-2"></i>Add House</h2>
             </div>
             <div class="card-body">
-              <form method="POST" autocomplete="off" id="house-form">
+              <form method="POST" autocomplete="off" id="house-form" novalidate>
                 <div class="row g-3">
                   <div class="col-md-6">
                     <label class="form-label">House Name <span class="text-danger">*</span></label>
-                    <input type="text" name="house_name" class="form-control" value="<?= $pref_name ?>" required>
+                    <input type="text" name="house_name" class="form-control <?= isset($errors['house_name'])?'is-invalid':'' ?>" value="<?= $pref_name ?>" required>
+                    <div class="invalid-feedback"><?= $errors['house_name'] ?? 'Please enter a house name.' ?></div>
                   </div>
                   <div class="col-md-6">
                     <label class="form-label">Floors <span class="text-danger">*</span></label>
-                    <input type="number" name="floors_cnt" id="floors_cnt" class="form-control" min="1" value="<?= $pref_floors ?>" required>
+                    <input type="number" name="floors_cnt" id="floors_cnt" class="form-control <?= isset($errors['floors_cnt'])?'is-invalid':'' ?>" min="1" value="<?= (int)$pref_floors ?>" required>
+                    <div class="invalid-feedback"><?= $errors['floors_cnt'] ?? 'At least 1 floor.' ?></div>
                   </div>
-                  <div class="col-12">
-                    <label class="form-label">House Address</label>
-                    <input type="text" name="house_address" class="form-control" value="<?= $pref_addr ?>">
+
+                  <!-- Address (PSGC) -->
+                  <div class="col-12"><hr class="my-2"></div>
+                  <div class="col-12"><h6 class="mb-2">House Address (Philippines)</h6></div>
+
+                  <div class="col-md-6">
+                    <label class="form-label">Region <span class="text-danger">*</span></label>
+                    <select id="region" class="form-select <?= isset($errors['region'])?'is-invalid':'' ?>" required></select>
+                    <div class="invalid-feedback"><?= $errors['region'] ?? 'Select a region.' ?></div>
+                    <input type="hidden" name="region_code" id="region_code" value="<?= val($old,'region_code') ?>">
+                    <input type="hidden" name="region_name" id="region_name" value="<?= val($old,'region_name') ?>">
+                  </div>
+
+                  <div class="col-md-6">
+                    <label class="form-label">Province <span class="text-danger">*</span></label>
+                    <select id="province" class="form-select <?= isset($errors['province'])?'is-invalid':'' ?>" required disabled></select>
+                    <div class="invalid-feedback"><?= $errors['province'] ?? 'Select a province.' ?></div>
+                    <input type="hidden" name="province_code" id="province_code" value="<?= val($old,'province_code') ?>">
+                    <input type="hidden" name="province_name" id="province_name" value="<?= val($old,'province_name') ?>">
+                  </div>
+
+                  <div class="col-md-6">
+                    <label class="form-label">City/Municipality <span class="text-danger">*</span></label>
+                    <select id="city" class="form-select <?= isset($errors['city'])?'is-invalid':'' ?>" required disabled></select>
+                    <div class="invalid-feedback"><?= $errors['city'] ?? 'Select a city/municipality.' ?></div>
+                    <input type="hidden" name="city_code" id="city_code" value="<?= val($old,'city_code') ?>">
+                    <input type="hidden" name="city_name" id="city_name" value="<?= val($old,'city_name') ?>">
+                  </div>
+
+                  <div class="col-md-6">
+                    <label class="form-label">Barangay <span class="text-danger">*</span></label>
+                    <select id="barangay" class="form-select <?= isset($errors['barangay'])?'is-invalid':'' ?>" required disabled></select>
+                    <div class="invalid-feedback"><?= $errors['barangay'] ?? 'Select a barangay.' ?></div>
+                    <input type="hidden" name="brgy_code" id="brgy_code" value="<?= val($old,'brgy_code') ?>">
+                    <input type="hidden" name="brgy_name" id="brgy_name" value="<?= val($old,'brgy_name') ?>">
+                  </div>
+
+                  <div class="col-md-8">
+                    <label class="form-label">Street / Zone / Purok (Optional)</label>
+                    <input type="text" name="street_details" class="form-control" value="<?= val($old,'street_details') ?>" placeholder="e.g. Zone 8 210 Zayas Oroham">
+                  </div>
+                  <div class="col-md-4">
+                    <label class="form-label">ZIP Code</label>
+                    <input type="text" name="zip_code" class="form-control <?= isset($errors['zip_code'])?'is-invalid':'' ?>" value="<?= val($old,'zip_code') ?>" placeholder="e.g. 9000" pattern="\d{4}">
+                    <div class="invalid-feedback"><?= $errors['zip_code'] ?? 'ZIP must be 4 digits.' ?></div>
                   </div>
 
                   <!-- Dynamic rooms-per-floor -->
@@ -289,6 +366,128 @@ $pref_rooms = $_POST['rooms_per_floor'] ?? [];
 
       // initial render
       renderRoomsPerFloor();
+    })();
+
+    // ===== PSGC API Cascading Dropdowns (same as tenants) =====
+    const PSGC = 'https://psgc.gitlab.io/api';
+
+    const elRegion   = document.getElementById('region');
+    const elProv     = document.getElementById('province');
+    const elCity     = document.getElementById('city');
+    const elBrgy     = document.getElementById('barangay');
+
+    const hRegionCode= document.getElementById('region_code');
+    const hRegionName= document.getElementById('region_name');
+    const hProvCode  = document.getElementById('province_code');
+    const hProvName  = document.getElementById('province_name');
+    const hCityCode  = document.getElementById('city_code');
+    const hCityName  = document.getElementById('city_name');
+    const hBrgyCode  = document.getElementById('brgy_code');
+    const hBrgyName  = document.getElementById('brgy_name');
+
+    function opt(val, text){ const o=document.createElement('option'); o.value=val; o.textContent=text; return o; }
+    function setDisabled(sel, disabled){ sel.disabled = disabled; if(disabled){ sel.innerHTML=''; } }
+
+    async function fetchJSON(url){
+      const r = await fetch(url, {headers:{'Accept':'application/json'}});
+      if (!r.ok) throw new Error('Network error');
+      return r.json();
+    }
+
+    async function loadRegions(){
+      elRegion.innerHTML = '';
+      elRegion.appendChild(opt('', '-- Select Region --'));
+      const data = await fetchJSON(`${PSGC}/regions/`);
+      data.sort((a,b)=> (a.regionCode||'').localeCompare(b.regionCode||'')); // by region code
+      data.forEach(x => elRegion.appendChild(opt(x.code, `${x.regionCode} — ${x.name}`)));
+      if (hRegionCode.value) elRegion.value = hRegionCode.value;
+      elRegion.dispatchEvent(new Event('change'));
+    }
+
+    async function loadProvinces(regionCode){
+      setDisabled(elProv, true); setDisabled(elCity, true); setDisabled(elBrgy, true);
+      elProv.innerHTML = ''; elCity.innerHTML=''; elBrgy.innerHTML='';
+      hProvCode.value=''; hProvName.value=''; hCityCode.value=''; hCityName.value=''; hBrgyCode.value=''; hBrgyName.value='';
+
+      if(!regionCode){ return; }
+      elProv.appendChild(opt('', '-- Select Province --'));
+      const data = await fetchJSON(`${PSGC}/regions/${regionCode}/provinces/`);
+      data.sort((a,b)=> a.name.localeCompare(b.name));
+      data.forEach(x => elProv.appendChild(opt(x.code, x.name)));
+      setDisabled(elProv, false);
+      if (hProvCode.value) elProv.value = hProvCode.value;
+      elProv.dispatchEvent(new Event('change'));
+    }
+
+    async function loadCities(provinceCode){
+      setDisabled(elCity, true); setDisabled(elBrgy, true);
+      elCity.innerHTML=''; elBrgy.innerHTML='';
+      hCityCode.value=''; hCityName.value=''; hBrgyCode.value=''; hBrgyName.value='';
+
+      if(!provinceCode){ return; }
+      elCity.appendChild(opt('', '-- Select City/Municipality --'));
+      const data = await fetchJSON(`${PSGC}/provinces/${provinceCode}/cities-municipalities/`);
+      data.sort((a,b)=> a.name.localeCompare(b.name));
+      data.forEach(x => elCity.appendChild(opt(x.code, x.name)));
+      setDisabled(elCity, false);
+      if (hCityCode.value) elCity.value = hCityCode.value;
+      elCity.dispatchEvent(new Event('change'));
+    }
+
+    async function loadBarangays(cityCode){
+      setDisabled(elBrgy, true);
+      elBrgy.innerHTML='';
+      hBrgyCode.value=''; hBrgyName.value='';
+
+      if(!cityCode){ return; }
+      elBrgy.appendChild(opt('', '-- Select Barangay --'));
+      const data = await fetchJSON(`${PSGC}/cities-municipalities/${cityCode}/barangays/`);
+      data.sort((a,b)=> a.name.localeCompare(b.name));
+      data.forEach(x => elBrgy.appendChild(opt(x.code, x.name)));
+      setDisabled(elBrgy, false);
+      if (hBrgyCode.value) elBrgy.value = hBrgyCode.value;
+    }
+
+    // Bind changes
+    elRegion.addEventListener('change', () => {
+      const code = elRegion.value;
+      const name = elRegion.selectedOptions[0]?.textContent?.split('—').slice(1).join('—').trim() || '';
+      hRegionCode.value = code || '';
+      hRegionName.value = name || '';
+      loadProvinces(code);
+    });
+
+    elProv.addEventListener('change', () => {
+      const code = elProv.value;
+      const name = elProv.selectedOptions[0]?.textContent || '';
+      hProvCode.value = code || '';
+      hProvName.value = name || '';
+      loadCities(code);
+    });
+
+    elCity.addEventListener('change', () => {
+      const code = elCity.value;
+      const name = elCity.selectedOptions[0]?.textContent || '';
+      hCityCode.value = code || '';
+      hCityName.value = name || '';
+      loadBarangays(code);
+    });
+
+    elBrgy.addEventListener('change', () => {
+      const code = elBrgy.value;
+      const name = elBrgy.selectedOptions[0]?.textContent || '';
+      hBrgyCode.value = code || '';
+      hBrgyName.value = name || '';
+    });
+
+    // Initial load
+    (async function init(){
+      try{
+        await loadRegions();
+      }catch(e){
+        console.warn('PSGC load failed', e);
+        elRegion.innerHTML = '<option value="">Unable to load regions (check internet)</option>';
+      }
     })();
   </script>
 </body>

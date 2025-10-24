@@ -34,6 +34,7 @@ header("Refresh: 5; URL=/PADROOM_BOARDERS/login.php");
     :root {
       --vio1: #361E5C;
       --vio2: #6141A6;
+      --green: #4ADE80;
     }
 
     * {
@@ -62,6 +63,7 @@ header("Refresh: 5; URL=/PADROOM_BOARDERS/login.php");
       animation: pop 0.25s ease-out;
       text-align: center;
       backdrop-filter: blur(10px);
+      position: relative;
     }
 
     @keyframes pop {
@@ -81,6 +83,7 @@ header("Refresh: 5; URL=/PADROOM_BOARDERS/login.php");
       font-size: 1rem;
     }
 
+    /* Spinner */
     .spinner {
       margin: 1rem auto 1.5rem;
       width: 60px;
@@ -96,6 +99,53 @@ header("Refresh: 5; URL=/PADROOM_BOARDERS/login.php");
       to { transform: rotate(360deg); }
     }
 
+    /* Checkmark */
+    .checkmark-wrapper {
+      display: none;
+      justify-content: center;
+      align-items: center;
+      margin: 1rem auto 1.5rem;
+    }
+
+    .checkmark {
+      width: 60px;
+      height: 60px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--green);
+      transform: scale(0);
+      opacity: 0;
+      animation-fill-mode: forwards;
+    }
+
+    .checkmark svg {
+      width: 30px;
+      height: 30px;
+      stroke: white;
+      stroke-width: 3;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      fill: none;
+      stroke-dasharray: 48;
+      stroke-dashoffset: 48;
+      animation: draw 0.8s ease forwards;
+      animation-delay: 0.3s;
+    }
+
+    @keyframes draw {
+      to {
+        stroke-dashoffset: 0;
+      }
+    }
+
+    @keyframes scaleIn {
+      0% { transform: scale(0); opacity: 0; }
+      70% { transform: scale(1.2); opacity: 1; }
+      100% { transform: scale(1); opacity: 1; }
+    }
+
     .countdown {
       margin-top: 1rem;
       font-size: 0.95rem;
@@ -106,13 +156,19 @@ header("Refresh: 5; URL=/PADROOM_BOARDERS/login.php");
 <body>
   <div class="card">
     <div class="spinner"></div>
-    <h1>Signing you out...</h1>
+    <div class="checkmark-wrapper">
+      <div class="checkmark">
+        <svg viewBox="0 0 52 52">
+          <path d="M14 27 L22 35 L38 18"></path>
+        </svg>
+      </div>
+    </div>
+    <h1 id="statusText">Signing you out...</h1>
     <p>Your session is ending. You’ll be redirected to login shortly.</p>
     <div class="countdown">Redirecting in <span id="timer">5</span> seconds...</div>
   </div>
 
   <script>
-    // Countdown display
     let timeLeft = 5;
     const timer = document.getElementById('timer');
     const countdown = setInterval(() => {
@@ -120,6 +176,17 @@ header("Refresh: 5; URL=/PADROOM_BOARDERS/login.php");
       timer.textContent = timeLeft;
       if (timeLeft <= 0) clearInterval(countdown);
     }, 1000);
+
+    // Switch spinner to checkmark after 2 seconds
+    setTimeout(() => {
+      document.querySelector('.spinner').style.display = 'none';
+      const checkWrapper = document.querySelector('.checkmark-wrapper');
+      checkWrapper.style.display = 'flex';
+      const checkmark = document.querySelector('.checkmark');
+      checkmark.style.animation = 'scaleIn 0.5s ease forwards';
+
+      document.getElementById('statusText').textContent = 'Successfully signed out';
+    }, 2000);
   </script>
 </body>
 </html>

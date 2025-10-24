@@ -4,7 +4,7 @@ require_once __DIR__ . '/../inclusions/require_login.php';
 require_once __DIR__ . '/../inclusions/connection.php';
 
 $BASE = rtrim(dirname($_SERVER['SCRIPT_NAME']), '/');
-$msg = "";
+$msg = $_GET['msg'] ?? "";
 $err = "";
 
 /* ---------------- Helpers ---------------- */
@@ -34,6 +34,27 @@ function current_rate(mysqli $conn, int $room_id): ?float {
   return $ok ? (float)$rate : null;
 }
 
+/** 30-day proration due-date calculator */
+function compute_due_date(string $start_date, float $monthly_rate, float $total_paid): string {
+  if ($monthly_rate <= 0) return $start_date;
+  $months    = (int) floor($total_paid / $monthly_rate);
+  $remainder = $total_paid - ($months * $monthly_rate);
+  $daily     = $monthly_rate / 30.0;
+  $extra     = (int) floor($remainder / $daily);
+
+  $dt = new DateTime($start_date);
+  if ($months > 0) $dt->modify("+{$months} month");
+  if ($extra  > 0) $dt->modify("+{$extra} day");
+
+  return $dt->format('Y-m-d');
+}
+
+function redirect_self_with($msg){
+  $q = http_build_query(['msg'=>$msg]);
+  header("Location: ".$_SERVER['PHP_SELF'].'?'.$q);
+  exit;
+}
+
 /* --------------- Actions ------------------ */
 
 /* Assign a tenant to a vacant room (creates renter + payment, sets room occupied) */
@@ -50,104 +71,94 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action']??'')==='assign') {
     $stmt->bind_param("i", $room_id);
     $stmt->execute(); $stmt->bind_result($rstatus);
     $found = $stmt->fetch(); $stmt->close();
-    if (!$found) {
-      $err = "Room not found.";
-    } elseif ($rstatus !== 'vacant') {
-      $err = "Selected room is not vacant.";
-    } else {
+
+    if (!$found)            { $err = "Room not found."; }
+    elseif ($rstatus!=='vacant'){ $err = "Selected room is not vacant."; }
+    else {
       $rate = current_rate($conn, $room_id);
       if (!$rate || $rate <= 0) {
         $err = "No valid monthly rate set for that room.";
       } else {
-        $months = (int)floor($amount / $rate);
-        if ($months < 1) {
-          $err = "Amount (₱".number_format($amount,2).") is less than rate (₱".number_format($rate,2).").";
-        } else {
-          $start = date('Y-m-d');
-          $due   = date('Y-m-d', strtotime("+$months month", strtotime($start)));
-          try {
-            $conn->begin_transaction();
+        $start = date('Y-m-d');
+        $due   = compute_due_date($start, (float)$rate, $amount);
+        $months_paid = (int)floor($amount / (float)$rate);
+        try {
+          $conn->begin_transaction();
 
-            // renters
-            $stmt = $conn->prepare("
-              INSERT INTO renters (tenant_id, room_id, start_date, due_date, monthly_rate, total_paid, status)
-              VALUES (?, ?, ?, ?, ?, ?, 'active')
-            ");
-            $stmt->bind_param("iissdd", $tenant_id, $room_id, $start, $due, $rate, $amount);
-            if (!$stmt->execute()) throw new Exception("renters: ".$stmt->error);
-            $renter_id = $stmt->insert_id;
-            $stmt->close();
+          // renters
+          $stmt = $conn->prepare("
+            INSERT INTO renters (tenant_id, room_id, start_date, due_date, monthly_rate, total_paid, status)
+            VALUES (?, ?, ?, ?, ?, ?, 'active')
+          ");
+          $stmt->bind_param("iissdd", $tenant_id, $room_id, $start, $due, $rate, $amount);
+          if (!$stmt->execute()) throw new Exception("renters: ".$stmt->error);
+          $renter_id = $stmt->insert_id;
+          $stmt->close();
 
-            // payments (with room_id)
-            $stmt = $conn->prepare("
-              INSERT INTO payments (renter_id, room_id, amount, months_paid)
-              VALUES (?, ?, ?, ?)
-            ");
-            $months_paid = $months;
-            $stmt->bind_param("iidi", $renter_id, $room_id, $amount, $months_paid);
-            if (!$stmt->execute()) throw new Exception("payments: ".$stmt->error);
-            $stmt->close();
+          // payments
+          $stmt = $conn->prepare("
+            INSERT INTO payments (renter_id, room_id, amount, months_paid)
+            VALUES (?, ?, ?, ?)
+          ");
+          $stmt->bind_param("iidi", $renter_id, $room_id, $amount, $months_paid);
+          if (!$stmt->execute()) throw new Exception("payments: ".$stmt->error);
+          $stmt->close();
 
-            // set room occupied
-            $stmt = $conn->prepare("UPDATE rooms SET status='occupied' WHERE id=?");
-            $stmt->bind_param("i", $room_id);
-            if (!$stmt->execute()) throw new Exception("rooms: ".$stmt->error);
-            $stmt->close();
+          // set room occupied
+          $stmt = $conn->prepare("UPDATE rooms SET status='occupied' WHERE id=?");
+          $stmt->bind_param("i", $room_id);
+          if (!$stmt->execute()) throw new Exception("rooms: ".$stmt->error);
+          $stmt->close();
 
-            $conn->commit();
-            $msg = "Assigned. Covered <strong>$months</strong> month(s). Due: <strong>$due</strong>.";
-          } catch (Exception $e) {
-            $conn->rollback();
-            $err = "Assign failed → ".$e->getMessage();
-          }
+          $conn->commit();
+          redirect_self_with("Assigned successfully. Due: {$due}");
+        } catch (Exception $e) {
+          $conn->rollback();
+          $err = "Assign failed → ".$e->getMessage();
         }
       }
     }
   }
 }
 
-/* Add payment (extend due) from room tile form */
+/* Add payment (prorated 30-day) */
 if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action']??'')==='add_payment') {
   $renter_id = (int)($_POST['renter_id'] ?? 0);
   $amount    = (float)($_POST['pay_amount'] ?? 0);
   if ($renter_id <= 0 || $amount <= 0) {
     $err = "Invalid renter/amount.";
   } else {
-    $stmt = $conn->prepare("SELECT due_date, monthly_rate, total_paid, room_id FROM renters WHERE id=? AND status='active'");
+    $stmt = $conn->prepare("SELECT start_date, monthly_rate, total_paid, room_id FROM renters WHERE id=? AND status='active'");
     $stmt->bind_param("i", $renter_id);
     $stmt->execute();
-    $stmt->bind_result($due, $rate, $total, $room_id);
+    $stmt->bind_result($start_date, $rate, $total, $room_id);
     $ok = $stmt->fetch(); $stmt->close();
 
     if (!$ok) { $err = "Active renter not found."; }
     elseif ($rate <= 0) { $err = "Invalid monthly rate."; }
     else {
-      $months = (int)floor($amount / (float)$rate);
-      if ($months < 1) { $err = "Amount (₱".number_format($amount,2).") < rate (₱".number_format($rate,2).")."; }
-      else {
-        $new_due   = date('Y-m-d', strtotime("+$months month", strtotime($due)));
-        $new_total = (float)$total + $amount;
+      $new_total = (float)$total + $amount;
+      $new_due   = compute_due_date($start_date, (float)$rate, $new_total);
+      $months_paid = (int)floor($amount / (float)$rate);
 
-        try{
-          $conn->begin_transaction();
+      try{
+        $conn->begin_transaction();
 
-          $stmt = $conn->prepare("UPDATE renters SET due_date=?, total_paid=? WHERE id=?");
-          $stmt->bind_param("sdi", $new_due, $new_total, $renter_id);
-          if (!$stmt->execute()) throw new Exception("renters: ".$stmt->error);
-          $stmt->close();
+        $stmt = $conn->prepare("UPDATE renters SET due_date=?, total_paid=? WHERE id=?");
+        $stmt->bind_param("sdi", $new_due, $new_total, $renter_id);
+        if (!$stmt->execute()) throw new Exception("renters: ".$stmt->error);
+        $stmt->close();
 
-          $stmt = $conn->prepare("INSERT INTO payments (renter_id, room_id, amount, months_paid) VALUES (?, ?, ?, ?)");
-          $months_paid = $months;
-          $stmt->bind_param("iidi", $renter_id, $room_id, $amount, $months_paid);
-          if (!$stmt->execute()) throw new Exception("payments: ".$stmt->error);
-          $stmt->close();
+        $stmt = $conn->prepare("INSERT INTO payments (renter_id, room_id, amount, months_paid) VALUES (?, ?, ?, ?)");
+        $stmt->bind_param("iidi", $renter_id, $room_id, $amount, $months_paid);
+        if (!$stmt->execute()) throw new Exception("payments: ".$stmt->error);
+        $stmt->close();
 
-          $conn->commit();
-          $msg = "Payment added. +$months month(s). New due: <strong>$new_due</strong>.";
-        } catch (Exception $e) {
-          $conn->rollback();
-          $err = "Payment failed → ".$e->getMessage();
-        }
+        $conn->commit();
+        redirect_self_with("Payment added. New due: {$new_due}");
+      } catch (Exception $e) {
+        $conn->rollback();
+        $err = "Payment failed → ".$e->getMessage();
       }
     }
   }
@@ -157,7 +168,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action']??'')==='add_payment
 
 // Tenants for assignment
 $tenants = [];
-if ($res = $conn->query("SELECT id, first_name, middle_name, last_name FROM tenants ORDER BY last_name, first_name")) {
+if ($res = $conn->query("SELECT id, first_name, middle_name, last_name FROM tenants WHERE COALESCE(is_archived,0)=0 ORDER BY last_name, first_name")) {
   while ($row = $res->fetch_assoc()) $tenants[] = $row;
   $res->close();
 }
@@ -188,10 +199,9 @@ if ($res = $conn->query($sqlH)) {
   $res->close();
 }
 
-// For each house, we’ll lazy-load floors/rooms via one query now (simple + fast enough here)
+// For each house, load floors & rooms + active renter
 $houseDetails = []; // house_id => ['floors'=>[...], 'rooms'=>[ room rows with renter+tenant if any ]]
 if (!empty($houses)) {
-  // get floors
   $ids = implode(',', array_map('intval', array_column($houses,'id')));
   $floors = [];
   if ($res = $conn->query("SELECT id, house_id, floor_label, sort_order FROM floors WHERE house_id IN ($ids) ORDER BY house_id, sort_order")) {
@@ -201,7 +211,6 @@ if (!empty($houses)) {
   foreach ($houses as $h) $houseDetails[$h['id']] = ['floors'=>[], 'rooms'=>[]];
   foreach ($floors as $f) $houseDetails[$f['house_id']]['floors'][] = $f;
 
-  // get rooms + renter + tenant
   $rooms = [];
   if ($res = $conn->query("
     SELECT r.id, r.floor_id, r.room_label, r.capacity, r.status, r.notes,
@@ -218,8 +227,6 @@ if (!empty($houses)) {
     while ($r = $res->fetch_assoc()) $rooms[] = $r;
     $res->close();
   }
-  // bucket rooms per house
-  // need map floor->house
   $floorHouse = [];
   foreach ($floors as $f) $floorHouse[$f['id']] = $f['house_id'];
   foreach ($rooms as $rm) {
@@ -240,37 +247,74 @@ if (!empty($houses)) {
   <link href="<?= $BASE ?>/../assets/css/style.css" rel="stylesheet">
   <style>
     :root{
-      --pad-primary:#361E5C; --pad-accent:#6141A6; --pad-deep:#2A184B;
-      --pad-text:#FFFFFF;
+      --pad-primary:#361E5C; --pad-accent:#6141A6; --pad-deep:#2A184B; --pad-text:#FFFFFF;
+      --ink:#1f1f2b; --muted:#6c757d;
     }
-    .main{ margin-top:60px; padding:20px 20px 0 20px; transition:all .3s; }
+    .main{ margin-top:60px; padding:20px 20px 40px 20px; transition:all .3s; }
     @media (min-width: 992px){ .main{ margin-left:250px; } }
 
-    .gradient-btn{
-      background: linear-gradient(90deg, var(--pad-primary), var(--pad-accent));
-      color:#fff; border:none; border-radius:10px; padding:.5rem 1rem;
-      box-shadow:0 6px 18px rgba(54,30,92,.25);
+    /* Header actions */
+    .action-bar{ display:flex; gap:.6rem; justify-content:center; margin-bottom:1rem; }
+    .btn-grad{
+      background:linear-gradient(90deg,var(--pad-primary),var(--pad-accent));
+      color:#fff; border:none; border-radius:12px; padding:.6rem 1rem; font-weight:700;
+      box-shadow:0 8px 22px rgba(54,30,92,.25);
     }
-    .gradient-btn:hover{ opacity:.93; color:#fff; }
-
-    .chip{ border:1px solid rgba(0,0,0,.08); padding:.25rem .55rem; border-radius:999px; font-size:.85rem; background:#fff; }
-    .house-card{ cursor:pointer; border:1px solid rgba(0,0,0,.06); border-radius:14px; box-shadow:0 10px 24px rgba(0,0,0,.06); }
-    .house-card:hover{ box-shadow:0 14px 28px rgba(0,0,0,.10); }
-    .house-head .title{ font-weight:600; color:#2D1B4E; }
-    .muted{ color:#6c757d; }
-
-    .floor-title{ font-weight:600; margin-top:.35rem; }
-    .room-tile{ border:1px solid rgba(0,0,0,.08); border-radius:12px; padding:.75rem; background:#fff; position:relative; }
-    .room-tile .badge{ position:absolute; top:.5rem; right:.5rem; }
-    .room-center{ text-align:center; color:#4a4a4a; font-size:.92rem; }
-    .room-center .cap{ font-weight:600; }
-    .room-center .notes{ color:#6c757d; }
-    .countdown{ font-variant-numeric: tabular-nums; }
-    .overdue{ color:#dc3545; font-weight:600; }
-
-    .form-control:focus, .form-select:focus{
-      border-color:#6141A6; box-shadow:0 0 0 .2rem rgba(97,65,166,.15);
+    .btn-grad:hover{ opacity:.95; color:#fff; }
+    .btn-outline{
+      border:1px solid rgba(97,65,166,.35); color:#432d7a; background:#fff; border-radius:12px; padding:.6rem 1rem; font-weight:700;
     }
+    .btn-outline:hover{ background:linear-gradient(90deg,rgba(97,65,166,.12),rgba(54,30,92,.14)); color:#2d1b4e; }
+
+    /* House cards */
+    .house-card{
+      border:1px solid rgba(0,0,0,.06); border-radius:16px; background:#fff;
+      box-shadow:0 12px 28px rgba(0,0,0,.06); overflow:hidden;
+    }
+    .house-head{ display:flex; align-items:center; justify-content:space-between; gap:.75rem; padding:1rem 1rem 0.6rem 1rem; cursor:pointer; }
+    .house-title{ font-size:1.1rem; font-weight:800; color:#2D1B4E; }
+    .house-sub{ color:var(--muted); }
+    .chip{ display:inline-flex; align-items:center; gap:.4rem; padding:.28rem .6rem; border-radius:999px; font-size:.82rem; background:#f5f3ff; color:#4a3a86; border:1px solid rgba(97,65,166,.25); }
+    .chev{
+      width:30px; height:30px; border-radius:50%; display:grid; place-items:center;
+      transition:transform .25s ease; background:#f4f1fb; color:#6246af;
+    }
+    .chev.rot{ transform:rotate(180deg); }
+
+    .house-body{ display:none; padding:0 1rem 1rem 1rem; }
+
+    /* Floor & rooms */
+    .floor-title{
+      font-weight:800; color:#2D1B4E; margin:.8rem 0 .4rem 0;
+      background:linear-gradient(90deg,rgba(97,65,166,.12),rgba(54,30,92,.14)); padding:.4rem .6rem; border-radius:10px;
+    }
+    .room-tile{
+      border:1px solid rgba(0,0,0,.08); border-radius:12px; padding:.9rem; background:#fff;
+      box-shadow:0 8px 20px rgba(0,0,0,.05); min-height:116px;
+    }
+    .room-header{ display:flex; align-items:center; justify-content:space-between; margin-bottom:.35rem; }
+    .room-title{ font-weight:800; color:var(--ink); }
+
+    /* Gradient status pills */
+    .pill{
+      display:inline-flex; align-items:center; gap:.35rem; padding:.2rem .6rem; border-radius:999px;
+      font-size:.78rem; font-weight:800; color:#fff; box-shadow:0 6px 14px rgba(22,24,57,.10);
+    }
+    .pill-occupied{ background:linear-gradient(135deg,#4f46e5,#7c3aed); }
+    .pill-vacant  { background:linear-gradient(135deg,#10b981,#22c55e); }
+    .pill-maint   { background:linear-gradient(135deg,#f59e0b,#f97316); }
+
+    .detail-sm{ color:#4a4a4a; font-size:.92rem; }
+    .detail-sm .muted{ color:#6c757d; }
+
+    /* Add payment controls - compact */
+    .input-compact{ height:36px; font-size:.92rem; }
+    .btn-compact{ padding:.44rem .76rem; border-radius:10px; font-weight:700; line-height:1; }
+    .room-actions{ display:flex; gap:.5rem; align-items:center; margin-top:.55rem; }
+    @media (max-width:576px){ .room-actions{ flex-direction:column; align-items:stretch; } .btn-compact{ width:100%; } }
+
+    .countdown{ font-variant-numeric:tabular-nums; }
+    .overdue{ color:#dc3545; font-weight:700; }
   </style>
 </head>
 <body class="d-flex flex-column min-vh-100">
@@ -278,7 +322,7 @@ if (!empty($houses)) {
   <?php include __DIR__ . '/../admin/sidebar.php'; ?>
 
   <main id="main" class="main flex-grow-1">
-    <div class="pagetitle mb-3 text-center">
+    <div class="pagetitle text-center mb-2">
       <h1 class="h4 mb-1">Manage Renters</h1>
       <nav>
         <ol class="breadcrumb justify-content-center">
@@ -288,43 +332,14 @@ if (!empty($houses)) {
       </nav>
     </div>
 
-    <?php if ($msg): ?><div class="alert alert-success text-center"><?= $msg ?></div><?php endif; ?>
-    <?php if ($err): ?><div class="alert alert-danger text-center"><?= $err ?></div><?php endif; ?>
+    <?php if ($msg): ?><div class="alert alert-success text-center"><?= htmlspecialchars($msg) ?></div><?php endif; ?>
+    <?php if ($err): ?><div class="alert alert-danger text-center"><?= htmlspecialchars($err) ?></div><?php endif; ?>
 
-    <!-- Assign row -->
-    <form method="post" class="card shadow-sm mb-4">
-      <input type="hidden" name="action" value="assign">
-      <div class="card-body row g-3 align-items-end">
-        <div class="col-lg-5">
-          <label class="form-label">Tenant</label>
-          <select name="tenant_id" class="form-select">
-            <option value="">Select</option>
-            <?php foreach ($tenants as $t):
-              $name = $t['last_name'].', '.$t['first_name'].($t['middle_name']?' '.strtoupper(substr($t['middle_name'],0,1)).'.':''); ?>
-              <option value="<?= (int)$t['id'] ?>"><?= htmlspecialchars($name) ?></option>
-            <?php endforeach; ?>
-          </select>
-        </div>
-        <div class="col-lg-5">
-          <label class="form-label">Vacant Room</label>
-          <select name="room_id" class="form-select">
-            <option value="">Select</option>
-            <?php foreach ($vacantRooms as $r): ?>
-              <option value="<?= (int)$r['id'] ?>">
-                <?= htmlspecialchars($r['house_name'].' · '.$r['floor_label'].' · '.$r['room_label']) ?>
-              </option>
-            <?php endforeach; ?>
-          </select>
-        </div>
-        <div class="col-lg-2">
-          <label class="form-label">Initial Payment (₱)</label>
-          <input type="number" name="amount" class="form-control" min="0" step="0.01">
-        </div>
-        <div class="col-12 text-center">
-          <button class="gradient-btn"><i class="bi bi-check2-circle me-1"></i>Assign</button>
-        </div>
-      </div>
-    </form>
+    <!-- Actions -->
+    <div class="action-bar">
+      <button class="btn-grad" data-bs-toggle="modal" data-bs-target="#assignModal"><i class="bi bi-person-plus me-1"></i>Assign renter</button>
+      <a class="btn-outline" href="<?= $BASE ?>/tenants_create.php"><i class="bi bi-person-add me-1"></i>Create tenant</a>
+    </div>
 
     <!-- House cards -->
     <?php foreach ($houses as $h):
@@ -337,81 +352,69 @@ if (!empty($houses)) {
       foreach ($rooms as $r) { if ($r['status']==='vacant') $vac++; elseif ($r['status']==='occupied') $occ++; }
     ?>
       <div class="house-card mb-3" data-house="<?= $hid ?>">
-        <div class="house-head d-flex align-items-center justify-content-between p-3">
+        <div class="house-head">
           <div>
-            <div class="title"><?= htmlspecialchars($h['name']) ?></div>
+            <div class="house-title"><?= htmlspecialchars($h['name']) ?></div>
             <?php if (!empty($h['address'])): ?>
-              <div class="muted small"><i class="bi bi-geo-alt me-1"></i><?= htmlspecialchars($h['address']) ?></div>
+              <div class="house-sub small"><i class="bi bi-geo-alt me-1"></i><?= htmlspecialchars($h['address']) ?></div>
             <?php endif; ?>
           </div>
-          <div class="d-flex gap-2">
-            <span class="chip"><i class="bi bi-door-closed me-1"></i><?= $total ?> rooms</span>
-            <span class="chip"><i class="bi bi-emoji-smile me-1"></i><?= $vac ?> vacant</span>
-            <span class="chip"><i class="bi bi-person-check me-1"></i><?= $occ ?> occupied</span>
+          <div class="d-flex align-items-center gap-2">
+            <span class="chip"><i class="bi bi-door-closed"></i><?= $total ?> rooms</span>
+            <span class="chip"><i class="bi bi-emoji-smile"></i><?= $vac ?> vacant</span>
+            <span class="chip"><i class="bi bi-person-check"></i><?= $occ ?> occupied</span>
+            <span class="chev"><i class="bi bi-chevron-down"></i></span>
           </div>
         </div>
 
-        <div class="house-body px-3 pb-3" style="display:none;">
+        <div class="house-body">
           <?php foreach ($floors as $f):
             $floorRooms = array_values(array_filter($rooms, fn($rr)=> (int)$rr['floor_id']===(int)$f['id']));
           ?>
-            <div class="mb-2">
-              <div class="floor-title"><?= htmlspecialchars($f['floor_label']) ?></div>
-              <div class="row g-2 mt-1">
-                <?php foreach ($floorRooms as $rm): ?>
-                  <div class="col-12 col-sm-6 col-md-4 col-xl-3">
-                    <div class="room-tile">
-                      <div class="d-flex align-items-center justify-content-between mb-1">
-                        <div class="fw-semibold"><?= htmlspecialchars($rm['room_label']) ?></div>
-                        <?php if ($rm['status']==='vacant'): ?>
-                          <span class="badge bg-success-subtle text-success border border-success-subtle">vacant</span>
-                        <?php elseif ($rm['status']==='occupied'): ?>
-                          <span class="badge bg-primary-subtle text-primary border border-primary-subtle">occupied</span>
-                        <?php else: ?>
-                          <span class="badge bg-warning-subtle text-warning border border-warning-subtle">maintenance</span>
-                        <?php endif; ?>
-                      </div>
-
-                      <!-- center info: capacity + notes -->
-                      <?php if (!is_null($rm['capacity']) || !empty($rm['notes'])): ?>
-                        <div class="room-center mb-2">
-                          <?php if (!is_null($rm['capacity'])): ?>
-                            <div class="cap"><?= (int)$rm['capacity'] ?> person<?= (int)$rm['capacity']>1?'s':'' ?> capacity</div>
-                          <?php endif; ?>
-                          <?php if (!empty($rm['notes'])): ?>
-                            <div class="notes"><?= htmlspecialchars($rm['notes']) ?></div>
-                          <?php endif; ?>
-                        </div>
-                      <?php endif; ?>
-
+            <div class="floor-title"><?= htmlspecialchars($f['floor_label']) ?></div>
+            <div class="row g-2 mt-1">
+              <?php foreach ($floorRooms as $rm): ?>
+                <div class="col-12 col-sm-6 col-md-4 col-xl-3">
+                  <div class="room-tile">
+                    <div class="room-header">
+                      <div class="room-title"><?= htmlspecialchars($rm['room_label']) ?></div>
                       <?php if ($rm['status']==='vacant'): ?>
-                        <?php $rate = current_rate($conn,(int)$rm['id']); ?>
-                        <div class="small muted">Rate: <?= $rate ? '₱'.number_format($rate,2).'/mo' : '—' ?></div>
-                      <?php elseif ($rm['status']==='occupied' && $rm['renter_id']): ?>
-                        <div class="small">
-                          <div class="mb-1">
-                            <i class="bi bi-person-circle me-1"></i>
-                            <?= htmlspecialchars(
-                              ($rm['last_name']??'').', '.($rm['first_name']??'')
-                              .(empty($rm['middle_name'])?'':' '.strtoupper(substr($rm['middle_name'],0,1)).'.')
-                            ) ?>
-                          </div>
-                          <div>
-                            <i class="bi bi-hourglass-split me-1"></i>
-                            <span class="countdown" data-duedate="<?= htmlspecialchars($rm['due_date']) ?>"></span>
-                          </div>
-                        </div>
-                        <form method="post" class="mt-2 d-flex gap-2 align-items-center">
-                          <input type="hidden" name="action" value="add_payment">
-                          <input type="hidden" name="renter_id" value="<?= (int)$rm['renter_id'] ?>">
-                          <input type="number" class="form-control form-control-sm" name="pay_amount" min="0" step="0.01" placeholder="Amount">
-                          <button class="btn btn-sm gradient-btn">Add Payment</button>
-                        </form>
+                        <span class="pill pill-vacant"><i class="bi bi-check2-circle"></i>vacant</span>
+                      <?php elseif ($rm['status']==='occupied'): ?>
+                        <span class="pill pill-occupied"><i class="bi bi-person-check"></i>occupied</span>
+                      <?php else: ?>
+                        <span class="pill pill-maint"><i class="bi bi-tools"></i>maintenance</span>
                       <?php endif; ?>
                     </div>
+
+                    <?php if ($rm['status']==='vacant'): ?>
+                      <?php $rate = current_rate($conn,(int)$rm['id']); ?>
+                      <div class="detail-sm muted">Rate: <?= $rate ? '₱'.number_format($rate,2).'/mo' : '—' ?></div>
+
+                    <?php elseif ($rm['status']==='occupied' && $rm['renter_id']): ?>
+                      <div class="detail-sm">
+                        <div class="mb-1">
+                          <i class="bi bi-person-circle me-1"></i>
+                          <?= htmlspecialchars(
+                            ($rm['last_name']??'').', '.($rm['first_name']??'')
+                            .(empty($rm['middle_name'])?'':' '.strtoupper(substr($rm['middle_name'],0,1)).'.')
+                          ) ?>
+                        </div>
+                        <div>
+                          <i class="bi bi-hourglass-split me-1"></i>
+                          <span class="countdown" data-duedate="<?= htmlspecialchars($rm['due_date']) ?>"></span>
+                        </div>
+                      </div>
+                      <form method="post" class="room-actions">
+                        <input type="hidden" name="action" value="add_payment">
+                        <input type="hidden" name="renter_id" value="<?= (int)$rm['renter_id'] ?>">
+                        <input type="number" class="form-control form-control-sm input-compact" name="pay_amount" min="0" step="0.01" placeholder="Amount">
+                        <button class="btn-grad btn-compact" type="submit"><i class="bi bi-plus-circle me-1"></i>Add Payment</button>
+                      </form>
+                    <?php endif; ?>
                   </div>
-                <?php endforeach; ?>
-              </div>
+                </div>
+              <?php endforeach; ?>
             </div>
           <?php endforeach; ?>
         </div>
@@ -421,43 +424,90 @@ if (!empty($houses)) {
   </main>
 
   <?php include __DIR__ . '/../admin/footer.php'; ?>
+
   <script src="<?= $BASE ?>/../assets/vendor/bootstrap/js/bootstrap.bundle.min.js"></script>
   <script>
-    // Toggle open/close on house cards
+    // Expand / collapse with rotating chevron
     document.querySelectorAll('.house-card').forEach(card=>{
+      const head = card.querySelector('.house-head');
       const body = card.querySelector('.house-body');
-      card.querySelector('.house-head').addEventListener('click', ()=>{
-        body.style.display = (body.style.display==='none' || !body.style.display) ? 'block' : 'none';
+      const chev = card.querySelector('.chev');
+      head.addEventListener('click', ()=>{
+        const open = body.style.display === 'block';
+        document.querySelectorAll('.house-body').forEach(b=>b.style.display='none');
+        document.querySelectorAll('.chev').forEach(c=>c.classList.remove('rot'));
+        if (!open){ body.style.display='block'; chev.classList.add('rot'); }
       });
     });
 
     // Live countdowns (red when overdue)
     function updateCountdown(el){
-      const dueStr = el.getAttribute('data-duedate'); // yyyy-mm-dd
+      const dueStr = el.getAttribute('data-duedate');
       if (!dueStr) return;
-      const end = new Date(dueStr + 'T23:59:59'); // end of due day
+      const end = new Date(dueStr + 'T23:59:59');
       const now = new Date();
       let diff = Math.floor((end - now)/1000);
       if (isNaN(diff)) return;
 
       if (diff < 0) {
         el.textContent = 'Overdue';
-        el.classList.add('overdue');
-        return;
+        el.classList.add('overdue'); return;
       }
       const days = Math.floor(diff/86400); diff%=86400;
       const hrs  = Math.floor(diff/3600);  diff%=3600;
       const mins = Math.floor(diff/60);
       const secs = diff%60;
-
-      el.textContent = `${days}d ${hrs.toString().padStart(2,'0')}:${mins.toString().padStart(2,'0')}:${secs.toString().padStart(2,'0')}`;
-      el.classList.toggle('overdue', end < now);
+      el.textContent = `${days}d ${String(hrs).padStart(2,'0')}:${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`;
     }
-    function tickAll(){
-      document.querySelectorAll('.countdown').forEach(updateCountdown);
-    }
-    tickAll();
-    setInterval(tickAll, 1000);
+    function tickAll(){ document.querySelectorAll('.countdown').forEach(updateCountdown); }
+    tickAll(); setInterval(tickAll, 1000);
   </script>
+
+  <!-- Assign Modal -->
+  <div class="modal fade" id="assignModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+      <form method="post" class="modal-content">
+        <input type="hidden" name="action" value="assign">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="bi bi-person-plus me-2"></i>Assign renter to room</h5>
+          <button class="btn-close" type="button" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <div class="row g-3">
+            <div class="col-lg-6">
+              <label class="form-label">Tenant</label>
+              <select name="tenant_id" class="form-select" required>
+                <option value="">Select</option>
+                <?php foreach ($tenants as $t):
+                  $name = $t['last_name'].', '.$t['first_name'].($t['middle_name']?' '.strtoupper(substr($t['middle_name'],0,1)).'.':''); ?>
+                  <option value="<?= (int)$t['id'] ?>"><?= htmlspecialchars($name) ?></option>
+                <?php endforeach; ?>
+              </select>
+            </div>
+            <div class="col-lg-6">
+              <label class="form-label">Vacant Room</label>
+              <select name="room_id" class="form-select" required>
+                <option value="">Select</option>
+                <?php foreach ($vacantRooms as $r): ?>
+                  <option value="<?= (int)$r['id'] ?>">
+                    <?= htmlspecialchars($r['house_name'].' · '.$r['floor_label'].' · '.$r['room_label']) ?>
+                  </option>
+                <?php endforeach; ?>
+              </select>
+            </div>
+            <div class="col-lg-6">
+              <label class="form-label">Initial Payment (₱)</label>
+              <input type="number" name="amount" class="form-control" min="0" step="0.01" required>
+              <div class="form-text">Due date will be prorated using a 30-day month.</div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-outline" type="button" data-bs-dismiss="modal">Cancel</button>
+          <button class="btn-grad" type="submit"><i class="bi bi-check2-circle me-1"></i>Assign</button>
+        </div>
+      </form>
+    </div>
+  </div>
 </body>
 </html>

@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: 127.0.0.1
--- Generation Time: Oct 24, 2025 at 09:35 AM
+-- Generation Time: Oct 24, 2025 at 11:39 PM
 -- Server version: 10.4.32-MariaDB
 -- PHP Version: 8.0.30
 
@@ -63,7 +63,9 @@ INSERT INTO `floors` (`id`, `house_id`, `floor_label`, `sort_order`, `created_at
 (2, 1, 'Floor 2', 2, '2025-10-23 18:32:16', '2025-10-23 18:32:16'),
 (3, 2, 'Floor 1', 1, '2025-10-23 19:18:51', '2025-10-23 19:18:51'),
 (4, 2, 'Floor 2', 2, '2025-10-23 19:18:51', '2025-10-23 19:18:51'),
-(5, 3, 'Floor 1', 1, '2025-10-24 01:56:21', '2025-10-24 01:56:21');
+(5, 3, 'Floor 1', 1, '2025-10-24 01:56:21', '2025-10-24 01:56:21'),
+(6, 4, 'Floor 1', 1, '2025-10-24 12:24:47', '2025-10-24 12:24:47'),
+(7, 4, 'Floor 2', 2, '2025-10-24 12:24:47', '2025-10-24 12:24:47');
 
 -- --------------------------------------------------------
 
@@ -89,7 +91,8 @@ CREATE TABLE `houses` (
 INSERT INTO `houses` (`id`, `name`, `address`, `notes`, `is_archived`, `archived_at`, `created_at`, `updated_at`) VALUES
 (1, 'House 1 , Penrol Area', 'Zone8 210 , Lower Dagong Zayas', NULL, 1, '2025-10-24 03:17:44', '2025-10-23 18:32:16', '2025-10-23 19:17:44'),
 (2, 'House 1 , 2 Storey Boarding Rooms', 'Zone8 210 Zayas Oroham , Lower Dagong', NULL, 0, NULL, '2025-10-23 19:18:51', '2025-10-23 19:18:51'),
-(3, 'House 2 , Green Terso House', 'Zone8 210 Zayas Oroham , Lower Dagong', NULL, 0, NULL, '2025-10-24 01:56:21', '2025-10-24 01:56:21');
+(3, 'House 2 , Green Terso House', 'Zone8 210 Zayas Oroham , Lower Dagong', NULL, 0, NULL, '2025-10-24 01:56:21', '2025-10-24 01:56:21'),
+(4, 'House 3 , 2nd Floor Boarding House Design', 'Upper Carmen , Zone 10 , Purok 4, Carmen, City of Cagayan De Oro, Misamis Oriental, Northern Mindanao, 9000', NULL, 0, NULL, '2025-10-24 12:24:47', '2025-10-24 12:24:47');
 
 -- --------------------------------------------------------
 
@@ -114,7 +117,9 @@ CREATE TABLE `payments` (
 INSERT INTO `payments` (`id`, `renter_id`, `room_id`, `amount`, `months_paid`, `payment_date`, `remarks`) VALUES
 (2, 2, 34, 3000.00, 2, '2025-10-24 14:06:48', NULL),
 (3, 3, 31, 2150.00, 1, '2025-10-24 14:25:22', NULL),
-(4, 4, 32, 2150.00, 1, '2025-10-24 14:33:18', NULL);
+(4, 4, 32, 2150.00, 1, '2025-10-24 14:33:18', NULL),
+(5, 5, 33, 2250.00, 1, '2025-10-24 20:25:52', NULL),
+(6, 6, 33, 2350.00, 1, '2025-10-24 20:37:55', NULL);
 
 -- --------------------------------------------------------
 
@@ -141,7 +146,9 @@ CREATE TABLE `renters` (
 INSERT INTO `renters` (`id`, `tenant_id`, `room_id`, `start_date`, `due_date`, `monthly_rate`, `total_paid`, `status`, `created_at`) VALUES
 (2, 1, 34, '2025-10-24', '2025-12-24', 1500.00, 3000.00, 'active', '2025-10-24 06:06:48'),
 (3, 2, 31, '2025-10-24', '2025-12-07', 1500.00, 2150.00, 'active', '2025-10-24 06:25:22'),
-(4, 3, 32, '2025-10-24', '2025-12-07', 1500.00, 2150.00, 'active', '2025-10-24 06:33:17');
+(4, 3, 32, '2025-10-24', '2025-12-07', 1500.00, 2150.00, 'active', '2025-10-24 06:33:17'),
+(5, 4, 33, '2025-10-24', '2025-11-24', 1500.00, 2250.00, '', '2025-10-24 12:25:52'),
+(6, 4, 33, '2025-10-24', '2025-12-10', 1500.00, 2350.00, 'active', '2025-10-24 12:37:54');
 
 -- --------------------------------------------------------
 
@@ -197,12 +204,22 @@ INSERT INTO `rooms` (`id`, `floor_id`, `room_label`, `capacity`, `status`, `note
 (30, 4, 'Room 207', NULL, 'vacant', NULL, '2025-10-23 19:18:51', '2025-10-23 19:18:51'),
 (31, 5, 'Room 101', NULL, 'occupied', NULL, '2025-10-24 01:56:21', '2025-10-24 06:25:22'),
 (32, 5, 'Room 102', NULL, 'occupied', NULL, '2025-10-24 01:56:21', '2025-10-24 06:33:18'),
-(33, 5, 'Room 103', NULL, 'vacant', NULL, '2025-10-24 01:56:21', '2025-10-24 01:56:21'),
+(33, 5, 'Room 103', NULL, 'occupied', NULL, '2025-10-24 01:56:21', '2025-10-24 12:37:55'),
 (34, 5, 'Room 104', NULL, 'occupied', NULL, '2025-10-24 01:56:21', '2025-10-24 06:06:48'),
 (35, 5, 'Room 105', NULL, 'vacant', NULL, '2025-10-24 01:56:21', '2025-10-24 01:56:21'),
 (36, 5, 'Room 106', NULL, 'vacant', NULL, '2025-10-24 01:56:21', '2025-10-24 01:56:21'),
 (37, 5, 'Room 107', NULL, 'vacant', NULL, '2025-10-24 01:56:21', '2025-10-24 01:56:21'),
-(38, 5, 'Room 108', NULL, 'vacant', NULL, '2025-10-24 01:56:21', '2025-10-24 01:56:21');
+(38, 5, 'Room 108', NULL, 'vacant', NULL, '2025-10-24 01:56:21', '2025-10-24 01:56:21'),
+(39, 6, 'Room 101', NULL, 'vacant', NULL, '2025-10-24 12:24:47', '2025-10-24 12:24:47'),
+(40, 7, 'Room 201', NULL, 'vacant', NULL, '2025-10-24 12:24:47', '2025-10-24 12:24:47'),
+(41, 7, 'Room 202', NULL, 'vacant', NULL, '2025-10-24 12:24:47', '2025-10-24 12:24:47'),
+(42, 7, 'Room 203', NULL, 'vacant', NULL, '2025-10-24 12:24:47', '2025-10-24 12:24:47'),
+(43, 7, 'Room 204', NULL, 'vacant', NULL, '2025-10-24 12:24:47', '2025-10-24 12:24:47'),
+(44, 7, 'Room 205', NULL, 'vacant', NULL, '2025-10-24 12:24:47', '2025-10-24 12:24:47'),
+(45, 7, 'Room 206', NULL, 'vacant', NULL, '2025-10-24 12:24:47', '2025-10-24 12:24:47'),
+(46, 7, 'Room 207', NULL, 'vacant', NULL, '2025-10-24 12:24:47', '2025-10-24 12:24:47'),
+(47, 7, 'Room 208', NULL, 'vacant', NULL, '2025-10-24 12:24:47', '2025-10-24 12:24:47'),
+(48, 7, 'Room 209', NULL, 'vacant', NULL, '2025-10-24 12:24:47', '2025-10-24 12:24:47');
 
 -- --------------------------------------------------------
 
@@ -279,7 +296,10 @@ CREATE TABLE `tenants` (
 INSERT INTO `tenants` (`id`, `first_name`, `middle_name`, `last_name`, `gender`, `age`, `civil_status`, `contact_no`, `emergency_name`, `emergency_contact`, `address`, `is_archived`, `archived_at`, `created_at`) VALUES
 (1, 'Erl Perseus', 'Gomez', 'Latras', 'Male', 21, 'Single', '09979925115', 'Eric P. Latras', '09098752194', 'Zone8 210 , Lower Dagong Zayas Oroham', 0, NULL, '2025-10-24 02:05:38'),
 (2, 'Kenneth', '', 'Otero', 'Male', 22, 'Widowed', '09929915254', 'Ms , Otero', '09614242142', 'Sucbongcogon', 0, NULL, '2025-10-24 03:21:12'),
-(3, 'Kevin', '', 'Migraso', 'Male', 21, 'Single', '09616142091', 'N / A', 'N / A', 'BONBON , Cagayan De Oro City', 0, NULL, '2025-10-24 14:29:31');
+(3, 'Kevin', '', 'Migraso', 'Male', 21, 'Single', '09616142091', 'N / A', 'N / A', 'BONBON , Cagayan De Oro City', 0, NULL, '2025-10-24 14:29:31'),
+(4, 'Eric', '', 'Latras', 'Male', 42, 'Married', '09616142091', 'Rachelle Latras', '09616142051', 'Zone 10 Upper Carmen, Carmen, City of Cagayan De Oro, Misamis Oriental, Northern Mindanao, 9000', 0, NULL, '2025-10-24 20:18:40'),
+(5, 'John', '', 'Berte', 'Male', 30, 'Single', '09616142091', 'Johana Berte', '09616142091', 'dsafdasfasdfdsafsa, Carmen, City of Cagayan De Oro, Misamis Oriental, Northern Mindanao, 9000', 0, NULL, '2025-10-25 05:21:56'),
+(6, 'Alysaa', '', 'America', 'Female', 22, 'Single', '09979925115', 'Alwano America', '09979925115', 'Zone 10 Upper Carmen, Carmen, City of Cagayan De Oro, Misamis Oriental, Northern Mindanao, 9000', 0, NULL, '2025-10-25 05:37:46');
 
 -- --------------------------------------------------------
 
@@ -390,31 +410,31 @@ ALTER TABLE `emergency_contacts`
 -- AUTO_INCREMENT for table `floors`
 --
 ALTER TABLE `floors`
-  MODIFY `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=6;
+  MODIFY `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=8;
 
 --
 -- AUTO_INCREMENT for table `houses`
 --
 ALTER TABLE `houses`
-  MODIFY `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=4;
+  MODIFY `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=5;
 
 --
 -- AUTO_INCREMENT for table `payments`
 --
 ALTER TABLE `payments`
-  MODIFY `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=5;
+  MODIFY `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=7;
 
 --
 -- AUTO_INCREMENT for table `renters`
 --
 ALTER TABLE `renters`
-  MODIFY `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=5;
+  MODIFY `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=7;
 
 --
 -- AUTO_INCREMENT for table `rooms`
 --
 ALTER TABLE `rooms`
-  MODIFY `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=39;
+  MODIFY `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=49;
 
 --
 -- AUTO_INCREMENT for table `room_rate_history`
@@ -426,7 +446,7 @@ ALTER TABLE `room_rate_history`
 -- AUTO_INCREMENT for table `tenants`
 --
 ALTER TABLE `tenants`
-  MODIFY `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=4;
+  MODIFY `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=7;
 
 --
 -- AUTO_INCREMENT for table `users`
